@@ -62,24 +62,6 @@ class Piece:
         self.color = color
         self.position = position
         self.has_moved = False
-        self.symbol = self._get_symbol()
-    
-    def _get_symbol(self) -> str:
-        symbols = {
-            (PieceType.KING, Color.WHITE): "♔",
-            (PieceType.QUEEN, Color.WHITE): "♕",
-            (PieceType.ROOK, Color.WHITE): "♖",
-            (PieceType.BISHOP, Color.WHITE): "♗",
-            (PieceType.KNIGHT, Color.WHITE): "♘",
-            (PieceType.PAWN, Color.WHITE): "♙",
-            (PieceType.KING, Color.BLACK): "♚",
-            (PieceType.QUEEN, Color.BLACK): "♛",
-            (PieceType.ROOK, Color.BLACK): "♜",
-            (PieceType.BISHOP, Color.BLACK): "♝",
-            (PieceType.KNIGHT, Color.BLACK): "♞",
-            (PieceType.PAWN, Color.BLACK): "♟"
-        }
-        return symbols[(self.type, self.color)]
 
 class ChessBoard:
     def __init__(self):
@@ -380,7 +362,6 @@ class ChessBoard:
         # Handle pawn promotion
         if piece.type == PieceType.PAWN and (to_pos[0] == 0 or to_pos[0] == 7):
             piece.type = PieceType.QUEEN  # Auto-promote to queen
-            piece.symbol = piece._get_symbol()
         
         # Set en passant target
         self.en_passant_target = None
@@ -518,9 +499,22 @@ class ChessAI:
                 board.is_stalemate(Color.WHITE) or board.is_stalemate(Color.BLACK))
     
     def save_board_state(self, board: ChessBoard) -> Dict:
-        # Save current board state for undo
+        # Save current board state for undo - deep copy pieces
+        board_copy = []
+        for row in board.board:
+            row_copy = []
+            for piece in row:
+                if piece:
+                    # Create a new piece with same attributes
+                    new_piece = Piece(piece.type, piece.color, piece.position)
+                    new_piece.has_moved = piece.has_moved
+                    row_copy.append(new_piece)
+                else:
+                    row_copy.append(None)
+            board_copy.append(row_copy)
+        
         state = {
-            'board': [[piece for piece in row] for row in board.board],
+            'board': board_copy,
             'current_player': board.current_player,
             'en_passant_target': board.en_passant_target,
             'white_king_pos': board.white_king_pos,
@@ -536,7 +530,9 @@ class ChessAI:
         board.en_passant_target = state['en_passant_target']
         board.white_king_pos = state['white_king_pos']
         board.black_king_pos = state['black_king_pos']
-        board.move_history = board.move_history[:state['move_history_len']]
+        # Restore move history length
+        while len(board.move_history) > state['move_history_len']:
+            board.move_history.pop()
 
 class ChessGame:
     def __init__(self):
@@ -639,7 +635,7 @@ class ChessGame:
                 if piece and piece.color == self.board.current_player:
                     # In AI mode, only allow human to move white pieces
                     if (self.game_mode == GameMode.HUMAN_VS_AI and 
-                        self.board.current_player == Color.BLACK):
+                        piece.color == Color.BLACK):
                         return
                     self.select_piece(piece, (row, col))
     
@@ -649,19 +645,25 @@ class ChessGame:
         self.valid_moves = self.board.get_valid_moves(piece)
     
     def make_ai_move(self):
+        # Add a small delay for better UX
+        pygame.time.wait(500)
+        
         best_move = self.ai.get_best_move(self.board)
         if best_move:
-            self.board.make_move(best_move[0], best_move[1])
+            success = self.board.make_move(best_move[0], best_move[1])
+            if success:
+                self.check_game_over()
+        else:
+            # If no move found, check for game over
             self.check_game_over()
     
     def check_game_over(self):
-        if self.board.is_checkmate(Color.WHITE):
+        current_player = self.board.current_player
+        
+        if self.board.is_checkmate(current_player):
             self.game_over = True
-            self.winner = "Black"
-        elif self.board.is_checkmate(Color.BLACK):
-            self.game_over = True
-            self.winner = "White"
-        elif self.board.is_stalemate(Color.WHITE) or self.board.is_stalemate(Color.BLACK):
+            self.winner = "White" if current_player == Color.BLACK else "Black"
+        elif self.board.is_stalemate(current_player):
             self.game_over = True
             self.winner = "Draw"
     
@@ -727,10 +729,80 @@ class ChessGame:
             for col in range(8):
                 piece = self.board.get_piece(row, col)
                 if piece:
-                    text = self.large_font.render(piece.symbol, True, (0, 0, 0))
-                    text_rect = text.get_rect(center=(col * SQUARE_SIZE + SQUARE_SIZE // 2,
-                                                    row * SQUARE_SIZE + SQUARE_SIZE // 2))
-                    self.screen.blit(text, text_rect)
+                    center_x = col * SQUARE_SIZE + SQUARE_SIZE // 2
+                    center_y = row * SQUARE_SIZE + SQUARE_SIZE // 2
+                    
+                    # Set colors
+                    if piece.color == Color.WHITE:
+                        fill_color = (255, 255, 255)
+                        outline_color = (0, 0, 0)
+                    else:
+                        fill_color = (50, 50, 50)
+                        outline_color = (255, 255, 255)
+                    
+                    self._draw_piece_shape(piece.type, center_x, center_y, fill_color, outline_color)
+    
+    def _draw_piece_shape(self, piece_type, x, y, fill_color, outline_color):
+        if piece_type == PieceType.PAWN:
+            # Draw pawn as circle with small base
+            pygame.draw.circle(self.screen, fill_color, (x, y - 5), 12)
+            pygame.draw.circle(self.screen, outline_color, (x, y - 5), 12, 2)
+            pygame.draw.rect(self.screen, fill_color, (x - 8, y + 5, 16, 8))
+            pygame.draw.rect(self.screen, outline_color, (x - 8, y + 5, 16, 8), 2)
+        
+        elif piece_type == PieceType.ROOK:
+            # Draw rook as castle tower
+            pygame.draw.rect(self.screen, fill_color, (x - 12, y - 8, 24, 16))
+            pygame.draw.rect(self.screen, outline_color, (x - 12, y - 8, 24, 16), 2)
+            # Crenellations
+            for i in range(3):
+                rect_x = x - 10 + i * 7
+                pygame.draw.rect(self.screen, fill_color, (rect_x, y - 15, 4, 7))
+                pygame.draw.rect(self.screen, outline_color, (rect_x, y - 15, 4, 7), 1)
+        
+        elif piece_type == PieceType.KNIGHT:
+            # Draw knight as horse head shape
+            points = [(x - 8, y + 8), (x - 12, y), (x - 8, y - 12), (x + 4, y - 8), (x + 8, y), (x + 4, y + 8)]
+            pygame.draw.polygon(self.screen, fill_color, points)
+            pygame.draw.polygon(self.screen, outline_color, points, 2)
+            # Eye
+            pygame.draw.circle(self.screen, outline_color, (x - 4, y - 4), 2)
+        
+        elif piece_type == PieceType.BISHOP:
+            # Draw bishop with pointed top
+            pygame.draw.circle(self.screen, fill_color, (x, y + 2), 10)
+            pygame.draw.circle(self.screen, outline_color, (x, y + 2), 10, 2)
+            # Mitre (pointed hat)
+            points = [(x - 6, y - 2), (x, y - 15), (x + 6, y - 2)]
+            pygame.draw.polygon(self.screen, fill_color, points)
+            pygame.draw.polygon(self.screen, outline_color, points, 2)
+            # Cross on top
+            pygame.draw.line(self.screen, outline_color, (x - 2, y - 12), (x + 2, y - 12), 2)
+            pygame.draw.line(self.screen, outline_color, (x, y - 14), (x, y - 10), 2)
+        
+        elif piece_type == PieceType.QUEEN:
+            # Draw queen with crown
+            pygame.draw.circle(self.screen, fill_color, (x, y + 2), 12)
+            pygame.draw.circle(self.screen, outline_color, (x, y + 2), 12, 2)
+            # Crown points
+            crown_points = [(x - 12, y - 8), (x - 6, y - 15), (x, y - 12), (x + 6, y - 15), (x + 12, y - 8)]
+            for i in range(len(crown_points)):
+                start_point = crown_points[i]
+                end_point = crown_points[(i + 1) % len(crown_points)]
+                pygame.draw.line(self.screen, outline_color, start_point, end_point, 2)
+            # Crown base
+            pygame.draw.line(self.screen, outline_color, (x - 12, y - 8), (x + 12, y - 8), 2)
+        
+        elif piece_type == PieceType.KING:
+            # Draw king with cross crown
+            pygame.draw.circle(self.screen, fill_color, (x, y + 2), 14)
+            pygame.draw.circle(self.screen, outline_color, (x, y + 2), 14, 2)
+            # Crown
+            pygame.draw.rect(self.screen, fill_color, (x - 10, y - 12, 20, 8))
+            pygame.draw.rect(self.screen, outline_color, (x - 10, y - 12, 20, 8), 2)
+            # Cross on top
+            pygame.draw.line(self.screen, outline_color, (x - 4, y - 8), (x + 4, y - 8), 3)
+            pygame.draw.line(self.screen, outline_color, (x, y - 12), (x, y - 4), 3)
     
     def draw_sidebar(self):
         # Background
